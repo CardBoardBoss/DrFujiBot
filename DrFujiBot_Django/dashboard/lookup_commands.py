@@ -57,7 +57,7 @@ def handle_pokemon(args):
                     break
             elif try_again:
                 check_base_game = True
-                
+
         if get_generation(current_game_name.value) >= 3:
             output += 'Abilities: '
             # First pass is to search for ROM hack stats. Second pass is to search for base game stats, if needed.
@@ -85,6 +85,96 @@ def handle_pokemon(args):
     else:
         output = '"' + pokemon_name + '" was not found'
     return output
+
+def handle_gsc(args):
+    output = ''
+    pokemon_name = ' '.join(args)
+    pokemon_name = correct_pokemon_name(pokemon_name)
+
+    if pokemon_not_present(pokemon_name):
+        return pokemon_name.title() + ' is not present in the current game'
+
+    pokemon_matches = Pokemon.objects.filter(name__iexact=pokemon_name)
+    if len(pokemon_matches) == 0:
+        pokemon_matches = PokemonForm.objects.filter(name__iexact=pokemon_name)
+
+    if len(pokemon_matches) > 0:
+        pokemon = pokemon_matches[0]
+
+        output = pokemon.name + ': ['
+
+    pokemon_learnset_matches = PokemonLearnsets.objects.filter(name__iexact=pokemon_name)
+    if pokemon_learnset_matches:
+        pokemon_learnset = pokemon_learnset_matches[0]
+
+        national_dex = False
+        current_game_name = Setting.objects.filter(key='Current Game')[0]
+        if 'National Dex' == current_game_name.value:
+            national_dex = True
+
+        # First pass is to search for ROM hack stats. Second pass is to search for base game stats, if needed.
+        # If not a ROM hack, stats should be found on the first pass every time.
+        try_again = True
+        check_base_game = False
+        while try_again:
+            for stat_sets_list_element in StatSetsListElement.objects.filter(list_id=pokemon.stat_sets):
+                stat_set = stat_sets_list_element.element
+                # Don't ask for base game stats if ROM hack stats aren't found, because they could be present in a later stat set
+                if is_game_name_in_game_list(current_game_name.value, stat_set.games, check_base_game=check_base_game):
+                    modified_stats = get_modified_stats(current_game_name.value, stat_set, pokemon.stat_sets)
+                    output +=  str(stat_set.hp) + '/' + modified_stats['hp']
+                    output +=  str(stat_set.attack) + '/' + modified_stats['attack']
+                    output +=  str(stat_set.defense) + '/' + modified_stats['defense']
+                    output +=  str(stat_set.special_attack) + '/' + modified_stats['special_attack']
+                    output +=  str(stat_set.special_defense) + '/' + modified_stats['special_defense']
+                    output +=  str(stat_set.speed) + modified_stats['speed'] + '] Moves at: '
+                    try_again = False
+                    break
+            for learnsets_list_element in LearnsetsListElement.objects.filter(list_id=pokemon_learnset.learnsets):
+                learnset = learnsets_list_element.element
+                if is_game_name_in_game_list(current_game_name.value, learnset.games, check_base_game=check_base_game):
+                    for learnset_moves_list_element in LearnsetMovesListElement.objects.filter(list_id=learnset.learnset_moves):
+                        learnset_move = learnset_moves_list_element.element
+                        list_of_moves = list(LearnsetMovesListElement.objects.filter(list_id=learnset.learnset_moves))
+                        if learnset_move.level != 1:
+                            output += str(learnset_move.level) + ', '
+                    try_again = False
+                    break
+            if national_dex and try_again:
+                current_game_name.value = get_next_national_dex_game(current_game_name.value)
+                if None == current_game_name.value:
+                    break
+            elif try_again:
+                check_base_game = True
+
+        if get_generation(current_game_name.value) >= 3:
+            output += 'Abilities: '
+            # First pass is to search for ROM hack stats. Second pass is to search for base game stats, if needed.
+            # If not a ROM hack, stats should be found on the first pass every time.
+            try_again = True
+            check_base_game = False
+            while try_again:
+                for ability_sets_list_element in AbilitySetsListElement.objects.filter(list_id=pokemon.ability_sets):
+                    ability_set = ability_sets_list_element.element
+                    if is_game_name_in_game_list(current_game_name.value, ability_set.games, check_base_game=check_base_game):
+                        for ability_records_list_element in AbilityRecordsListElement.objects.filter(list_id=ability_set.ability_records):
+                            ability_record = ability_records_list_element.element
+                            if ability_record.hidden == 'No' or (ability_record.hidden == 'Yes' and get_generation(current_game_name.value) >= 5):
+                                output += ability_record.name
+                                if ability_record.hidden == 'Yes':
+                                    output += ' (HA)'
+                            output += ', '
+                        try_again = False
+                        break
+                if try_again:
+                    check_base_game = True
+
+        while output.endswith(', '):
+            output = output[:-2]
+    else:
+        output = '"' + pokemon_name + '" was not found'
+    return output
+
 
 def handle_move(args):
     output = ''
@@ -523,12 +613,12 @@ def handle_catch_rate(args):
     else:
         output = '"' + pokemon_name + '" was not found'
     return output
- 
+
 def handle_exp_curve(args):
     output = ''
     pokemon_name = ' '.join(args)
     pokemon_name = correct_pokemon_name(pokemon_name)
-    
+
     if pokemon_not_present(pokemon_name):
         return pokemon_name.title() + ' is not present in the current game'
 
@@ -1128,6 +1218,7 @@ handlers = {'!pokemon': handle_pokemon,
             '!speedev': handle_speedev,
             '!tm': handle_tm,
             '!hm': handle_tm,
+            '!gsc': handle_gsc,
            }
 
 expected_args = {'!pokemon': 1,
@@ -1158,6 +1249,7 @@ expected_args = {'!pokemon': 1,
                  '!speedev': 1,
                  '!tm': 1,
                  '!hm': 1,
+                 '!gsc': 1,
                 }
 
 usage = {'!pokemon': 'Usage: !pokemon <pokemon name>',
@@ -1188,6 +1280,7 @@ usage = {'!pokemon': 'Usage: !pokemon <pokemon name>',
           '!speedev': 'Usage: !speedev <optional "choice scarf" or "scarfed"> <optional "beneficial"> <pokemon name>',
           '!tm': 'Usage: !tm <move name>',
           '!hm': 'Usage: !hm <move name>',
+          '!gsc': 'Usage: !gsc <pokemon name>',
          }
 
 def handle_lookup_command(line):
